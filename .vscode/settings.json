@@ -1,5 +1,6 @@
 {
     "files.associations": {
         "config,h": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "${workspaceFolder}/.pio/libdeps/esp32dev/Adafruit BusIO"
 }

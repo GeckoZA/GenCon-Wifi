@@ -1,0 +1,226 @@
+ //--- Wifi Manager Non Blocking Process and Web Portal ---//
+  wm.process();
+  if (!wm.getWebPortalActive())
+  {
+    wm.startWebPortal();
+  }
+  //--- MQTT Functions and connections ---//
+  if (WiFi.status() != WL_CONNECTED){
+    wm.process();
+    if (wm.getConfigPortalActive()){
+      wm.startConfigPortal();
+    }
+  }
+  else
+  {
+    if (MQTT_Active == 1)
+  {
+    client.loop();
+    if (!client.connected())
+    {
+      if (init_mqtt_conn = true)
+      {
+        reconnect();
+      }
+      else
+      {
+        mqttConnect();
+      }    
+    }
+    mqttPublish();
+  }
+
+  //--- NTP Time Update---//
+  if (wifi_time == 1)
+    {
+    NTPtimeClient.update();
+    }
+  }
+  DateTime now = rtc.now();
+  
+
+  BATT_VOLT = (analogRead(BATT_SENSE) * 3.3 / (1023) / (0.2272));
+  AC_12_VOLT = (analogRead(AC_12V_SENSE) * 3.3 / (1023)) / (0.2272);
+  TEMPERATURE = rtc.getTemperature();
+  overideSwitch(); // Run function to choose between Auto or Manual Mode overide button press
+  Generator_Monitoring();
+
+  if (MODE == 0 && MENU == 0) // ################################# Auto Mode
+  {
+    Display_Home_Screen();
+
+    if ((now.hour()) >= start_time && (now.hour()) <= stop_time)
+    {
+      setLED(0, 180, 0);
+
+      debugln("Hours are good for AUTO MODE");
+      debugln(now.hour());
+      debugln(start_time);
+      debug("AC 12v Status = ");
+      debugln(AC_12_VOLT);
+      debug("Generator Voltage = ");
+      debugln(GEN_VOLT);
+
+
+      unsigned long starttime = millis();
+
+      if (AC_12_VOLT < 6) // Power is out Run Auto Start
+      {
+        //AC_input = false;
+        if (shutdown == true)
+        {
+         while ((unsigned long)(millis() - starttime) >= 2000 && started == false){
+        Auto_Start_Sequance(); // Auto Start Sequance
+        }
+        }
+        
+        
+      if (started == true)
+      {
+//       while((unsigned long)(millis() - start_time) >= 2000 && started == true) {
+
+ //       if (GEN_VOLT > 200) // Voltage is Good on Generator
+//          {
+ //         debugln("Generator is Good Turning on Mains");
+//          digitalWrite(RELAY_MAINS, HIGH);
+          x++;
+          if( x >= 100){}
+          MODE = 2; // Monitoring Mode
+          x = 0;
+//          }
+
+//        else // Voltage is not good
+//          {
+ //         debugln("Generator is not good");
+ //         emergency = true;
+ //         ShutDown_Sequance();
+ //         MODE = 1;
+ //         }
+ //      }
+      }
+      
+       
+      }
+      else
+      {
+        AC_input = true;
+      }
+    }
+    else
+    {
+      debugln("After Hours in AUTO MODE");
+      setLED(0, 0, 0);
+    }
+  }
+  if (MODE == 2 && MENU == 0) // ################################# Monitoring Mode
+  {
+    Display_Home_Screen();
+
+    setLED(180, 0, 180); // Set LED to Purple while Monitoring
+    // Monitoring mode Mode Code
+    debugln("Monitoring Mode");
+    digitalWrite(RELAY_MAINS, HIGH);
+    
+    if (AC_12_VOLT < 6) // Municipal Power remains off
+    {
+      runTime = millis();
+      if ((unsigned long)(millis() - monitorpreviousMillis) >= monitor_Period)
+      {
+        monitorpreviousMillis = millis(); // update time every second
+
+        debug("Generator Voltage = ");
+        debugln(GEN_VOLT);
+        debug("AC 12V Status = ");
+        debugln(AC_12_VOLT);
+
+        if (GEN_VOLT < 150)
+        {
+          emergency = true;
+          ShutDown_Sequance();
+        }
+      }
+
+    }
+
+    if (AC_12_VOLT > 6)
+    {
+      // Power came back on during monitoring
+      setLED(180, 0, 50);
+      AC_input = true;
+      debugln("Exiting Monitoring Mode");
+      delay(5000);
+      ShutDown_Sequance();
+      debugln("Returning to AUTO");
+      MODE = 0; // Returning to Auto Watch Mode
+    }
+  }
+  if (MODE == 1 && MENU == 0) // ################################## Manual Mode
+  {
+    // Generator_Monitoring();
+
+    Display_Home_Screen();
+    setLED(180, 0, 0);
+    int SELECT_STATE = digitalRead(SELECT_BTN);
+    int ENTER_STATE = digitalRead(ENTER_BTN);
+    int MAINS_State = digitalRead(MAINS_BTN);
+    int gen_on_state = digitalRead(GEN_ON_BTN);
+    int start_state = digitalRead(START_BTN);
+
+    if (start_state == 1 && started == false)
+    {
+      delay(button_delay);
+      Auto_Start_Sequance();
+    }
+
+     if (start_state == 1 && started == true)
+    {
+      delay(button_delay);
+      ShutDown_Sequance();
+    }
+    
+
+    if (SELECT_STATE == 1 && ENTER_STATE == 1)
+    {
+      MENU = 1;
+      MODE = 4;
+      delay(button_delay);
+    }
+  }
+
+  if (MODE == 4 && MENU == 1)
+  {
+    setLED(0, 0, 180);
+    Display_Menu();
+  }
+
+  if ((unsigned long)(millis() - debugpreviousMillis) >= debugPeriod)
+  {
+    debugpreviousMillis = millis(); // update time every second
+                                    // debug("mqtt_server : ");
+                                    // debugln(mqtt_server);
+                                    // debug("mqtt_username : ");
+    // debugln(mqtt_username);
+    // debug("mqtt_password : ");
+    // debugln(mqtt_password);
+    // debug("mqtt_port : ");
+    // debugln(mqtt_port);
+
+    // debug("UTC Offset : ");
+    // debugln(utc_offset);
+    // debug("Start Time : ");
+    // debugln(start_time);
+    // debug("Stop Time : ");
+    // debugln(stop_time);
+    // debug("Generator Crank Time : ");
+    // debugln(crank_time);
+    // debugln(NTPtimeClient.getFormattedTime());
+    // debugln(NTPtimeClient.getDay());
+    // debugln(now.dayOfTheWeek());
+    // debugln(now.day());
+    // debug("Temperature: ");
+    // debug(rtc.getTemperature());
+    // debugln(" C");
+    // debug("MQTT Active: ");
+    // debugln(MQTT_Active);
+    // debug("Wifi Time: ");
+    // debugln(wifi_time);

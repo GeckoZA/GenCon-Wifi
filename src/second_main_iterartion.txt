@@ -52,7 +52,7 @@ bool loadConfigFile()
 #ifdef ERASE_WIFI
   SPIFFS.format();
 #endif
-  //SPIFFS.format();
+
   // read configuration from FS json
   debugln("mounting FS...");
 
@@ -82,17 +82,13 @@ bool loadConfigFile()
           start_time = json["start_time"].as<int>();
           stop_time = json["stop_time"].as<int>();
           crank_time = json["crank_time"].as<int>();
-          servoMin = json["servo_min"].as<uint8_t>();
-          servoMax = json["servo_max"].as<uint8_t>();
           // Screen Config Files
           Wifi_Active = json["wifi_active"].as<bool>();
           MQTT_Active = json["mqtt_active"].as<bool>();
           NTP_time_active = json["NTP_time"].as<bool>();
-          presance_detect_Active = json["presance_detect"].as<bool>();
-          initial_setup = json["initial_setup"].as<bool>();
-          Monitor_Active = json["monitor_active"].as<bool>();
+          presance_detect = json["presance_detect"].as<bool>();
 
-          // totalRunTime = json["total_run_time"].as<long>();
+          totalRunTime = json["total_run_time"].as<long>();
 
           return true;
         }
@@ -133,15 +129,11 @@ void saveConfigFile()
   json["start_time"] = start_time;
   json["stop_time"] = stop_time;
   json["crank_time"] = crank_time;
-  json["servo_min"] = servoMin;
-  json["servo_max"] = servoMax;
 
   json["mqtt_active"] = MQTT_Active;
   json["NTP_time"] = NTP_time_active;
-  json["presance_detect"] = presance_detect_Active;
-  json["initial_setup"] = initial_setup;
-  json["monitor_active"] = Monitor_Active;
-  // json["total_run_time"] = totalRunTime;
+  json["presance_detecte"] = presance_detect;
+  json["total_run_time"] = totalRunTime;
 
   File configFile = SPIFFS.open(JSON_CONFIG_FILE, "w");
   if (!configFile)
@@ -345,6 +337,10 @@ void OLEDSetup()
     // screen is not available ************************************************************************
   }
   display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(10, 20);
+
   display.drawBitmap(0, 0, Logo_image, 128, 63, 1);
 
   display.display();
@@ -399,7 +395,6 @@ void mqtt_int_connect()
       client.subscribe("GenCon/Cmnd/start-time");
       client.subscribe("GenCon/Cmnd/stop-time");
       client.subscribe("GenCon/Cmnd/presance-detect");
-      client.subscribe("GenCon/Cmnd/crank");
       init_mqtt_conn = true;
     }
   }
@@ -425,7 +420,6 @@ void mqtt_reconnect()
         client.subscribe("GenCon/Cmnd/start-time");
         client.subscribe("GenCon/Cmnd/stop-time");
         client.subscribe("GenCon/Cmnd/presance-detect");
-        client.subscribe("GenCon/Cmnd/crank");
       }
       else
       {
@@ -448,15 +442,15 @@ void mqttPublish()
     client.publish(start_time_topic, String(start_time).c_str(), true);
     client.publish(stop_time_topic, String(stop_time).c_str(), true);
     client.publish(presance_detect_topic, String(presance_detect).c_str(), true);
+    // client.publish(power_state_topic, String(AC_input).c_str(), true);
     client.publish(battery_volt_topic, String(BATT_VOLT).c_str(), true);
     client.publish(temp_topic, String(TEMPERATURE).c_str(), true);
     client.publish(gen_volt_topic, String(GEN_VOLT).c_str(), true);
     client.publish(control_mode_topic, String(MODE).c_str(), true);
-    client.publish(crank_time_topic, String(crank_time).c_str(), true);
   }
 }
 
-void callback(char *topic, byte *message, uint8_t length)
+void callback(char *topic, byte *message, unsigned int length)
 {
   debug("Message arrived on topic: ");
   debug(topic);
@@ -467,9 +461,7 @@ void callback(char *topic, byte *message, uint8_t length)
   String messageUTC;
   String messageStartTime;
   String messageStopTime;
-  String messageCrankTime;
   String messagepresance;
-
 
   for (int i = 0; i < length; i++)
   {
@@ -506,11 +498,6 @@ void callback(char *topic, byte *message, uint8_t length)
     debug((char)message[i]);
     messageStopTime += (char)message[i];
   }
-  for (int i = 0; i < length; i++)
-  {
-    debug((char)message[i]);
-    messageCrankTime += (char)message[i];
-  }
 
   debugln();
 
@@ -520,14 +507,14 @@ void callback(char *topic, byte *message, uint8_t length)
     if (messageMode == "on")
     {
       debugln("Auto Mode");
+      digitalWrite(ledPin, HIGH);
       MODE = 1;
-      currentState = generatorState::IDLE_AUTO;
     }
     else if (messageMode == "off")
     {
       debugln("Manual Mode");
+      digitalWrite(ledPin, LOW);
       MODE = 0;
-      currentState = generatorState::IDLE_MANUAL;
     }
   }
 
@@ -579,12 +566,14 @@ void callback(char *topic, byte *message, uint8_t length)
     if (messagepresance == "on")
     {
       debugln("Presance Detected");
-      presance_detect = 1;
+      presance_detect = true;
+      saveConfigFile();
     }
     else if (messagepresance == "off")
     {
       debugln("No Presance");
-      presance_detect = 0;
+      presance_detect = false;
+      saveConfigFile();
     }
   }
 
@@ -606,12 +595,6 @@ void callback(char *topic, byte *message, uint8_t length)
   {
     debug("Changing output to ");
     stop_time = (messageStopTime.toInt());
-    saveConfigFile();
-  }
-  if (String(topic) == "GenCon/Cmnd/crank")
-  {
-    debug("Changing output to ");
-    crank_time = (messageCrankTime.toInt());
     saveConfigFile();
   }
 }
@@ -695,7 +678,7 @@ void wifi_reconnect()
 }
 
 // Loop Control Functions
-void setLED(uint8_t red, uint8_t green, uint8_t blue)
+void setLED(int red, int green, int blue)
 {
   analogWrite(RED_LED, red);
   analogWrite(GREEN_LED, green);
@@ -704,37 +687,11 @@ void setLED(uint8_t red, uint8_t green, uint8_t blue)
 
 void overideSwitch()
 {
-  enum class controllerState : uint8_t
-  {
-    AUTO_MODE,
-    MANUAL_MODE,
-  };
-  static controllerState contCurrentState = controllerState::MANUAL_MODE;
+  // changing momentary button to switch
+  // changing momentary button to switch
+  int OverideSwitchNew = digitalRead(OVERIDE_BTN);
 
-  switch (contCurrentState)
-  {
-  case controllerState::MANUAL_MODE:
-    if (OVERIDE_PRESS == 1)
-    {
-      delay(button_delay);
-      MODE = 1;
-      contCurrentState = controllerState::AUTO_MODE;
-      currentState = generatorState::IDLE_AUTO;
-    }
-    break;
-  case controllerState::AUTO_MODE:
-    if (OVERIDE_PRESS == 1)
-    {
-      delay(button_delay);
-      MODE = 0;
-      contCurrentState = controllerState::MANUAL_MODE;
-      currentState = generatorState::IDLE_MANUAL;
-    }
-  default:
-    break;
-  }
-  // int OverideSwitchNew = digitalRead(OVERIDE_BTN);
-  /*if (OverideSwitchOld == 0 && OverideSwitchNew == 1)
+  if (OverideSwitchOld == 0 && OverideSwitchNew == 1)
   {
     if (overideState == 0)
     {
@@ -749,27 +706,155 @@ void overideSwitch()
       MODE = 1;
     }
   }
-  OverideSwitchOld = OverideSwitchNew;*/
-  // delay(20);
+  OverideSwitchOld = OverideSwitchNew;
+  delay(20);
+}
+
+void Start_Sequance()
+{
+  if (started == false)
+  {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(10, 2);
+    display.println("Staring Generator");
+    display.display();
+
+    switch (currentState)
+    {
+
+    case generatorState::STOPPED:
+
+      digitalWrite(RELAY_ON, HIGH); // Relay On to turn on Generator Power
+      debugln("Opening Choke");
+      chokeServo.attach(SERVO_PIN);
+      chokeServo.write(90); // Set Choke to Open
+      currentState = generatorState::CHOKE_ON;
+      startMillis = millis();
+
+      break;
+
+    case generatorState::CHOKE_ON:
+
+      if (millis() - startMillis > 1000)
+      {
+        debugln("Starting Generator");
+        digitalWrite(RELAY_START, HIGH); // Simulate key to start
+        startMillis = millis();
+        currentState = generatorState::STARTING;
+      }
+      break;
+
+    case generatorState::STARTING:
+
+      if (millis() - startMillis > (crank_time * 1000))
+      {
+        debugln("Simulating Releasing of the key");
+        digitalWrite(RELAY_START, LOW); // Simutales stopping the start and cranking of the key
+        startMillis = millis();
+        currentState = generatorState::RUNNING;
+      }
+      break;
+
+    case generatorState::RUNNING:
+
+      if (TEMPERATURE < 15)
+      {
+        if (millis() - startMillis > 8000)
+        {
+          debugln("Cold Day Closeing Choke");
+          chokeServo.attach(SERVO_PIN);
+          chokeServo.write(0); // Set Choke to Closed
+        }
+      }
+      else
+      {
+        if (millis() - startMillis > 2000)
+        {
+          debugln("Warm Day Closeing Choke");
+          display.setCursor(1, 38);
+          display.println("Closing Choke");
+          display.display();
+          chokeServo.attach(SERVO_PIN);
+          chokeServo.write(0); // Set Choke to Closed
+          startMillis = millis();
+          currentState = generatorState::STARTED;
+        }
+      }
+      break;
+
+    case generatorState::STARTED:
+
+      if (millis() - startMillis > 500)
+      {
+        display.setCursor(1, 50);
+        display.println("Start Complete");
+        display.display();
+        chokeServo.detach();
+        started = true;
+        debugln("Start Sequance Complete");
+        if (LAST_MODE == 1) //---Was in Auto Mode go to Monitoring
+        {
+          currentState = generatorState::MONITORING;
+        }
+        
+        MODE = LAST_MODE;
+      }
+      break;
+
+    default:
+      debugln(" Default Switch Case reached - Error");
+    }
+  }
+}
+
+void ShutDown_Sequance()
+{
+  if (started == true)
+  {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(10, 20);
+    // Display static text
+    display.println("Shutting Down");
+    display.display();
+    if (emergency == true)
+    {
+      digitalWrite(RELAY_MAINS, LOW);
+      digitalWrite(RELAY_ON, LOW);
+      MODE = 0;
+    }
+
+    digitalWrite(RELAY_MAINS, LOW);
+    delay(1000);
+    digitalWrite(RELAY_ON, LOW);
+
+    currentState = generatorState::STOPPED;
+    started = false;
+    MODE = LAST_MODE;
+  }
 }
 
 void Generator_Monitoring()
 {
-  static float Volts_TRMS = 0; // estimated actual current in amps
-
-  uint16_t RawValue = analogRead(ZMPT); // read the analog in value:
+  static float Volts_TRMS = 0;       // estimated actual current in amps
+  static float slope_intercept = 7.6;
+  
+  int RawValue = analogRead(ZMPT); // read the analog in value:
   inputStats.input(RawValue);      // log to Stats function
 
   Volts_TRMS = inputStats.sigma() * slope_intercept;
-  GEN_VOLT = Volts_TRMS;
+  //GEN_VOLT = Volts_TRMS;
 
-  if (Volts_TRMS >= 190 && Volts_TRMS <= 280)
+  if (Volts_TRMS >= 190 && Volts_TRMS <= 245)
   {
-    //debug("Generator Volatge: ");
+    debug("Generator Volatge: ");
     GEN_VOLT = Volts_TRMS;
-    //debugln(Volts_TRMS);
+    debugln(Volts_TRMS);
   }
-  else
+  if (Volts_TRMS < 189)
   {
     GEN_VOLT = 0;
   }
@@ -783,6 +868,8 @@ void Display_Home_Screen()
   display.clearDisplay();
   display.drawLine(0, 15, 128, 15, SSD1306_WHITE); // top Horizontal Line
   display.drawLine(0, 40, 128, 40, SSD1306_WHITE); // bottom Horizontal Line
+  display.drawLine(42, 44, 42, 64, SSD1306_WHITE);
+  display.drawLine(85, 44, 85, 64, SSD1306_WHITE);
 
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -795,20 +882,20 @@ void Display_Home_Screen()
   {
     display.drawBitmap(0, 0, Wifi_icon, 13, 11, 1);
   }
-  if (MQTT_Active == 1)
+  if (MQTT_Active == true)
   {
     display.drawBitmap(15, 0, mqtt_icon, 13, 13, 1);
   }
-  if (NTP_time_active == 1)
+  if (NTP_time_active == true)
   {
     display.drawBitmap(30, 0, Clock_icon, 13, 13, 1);
   }
-  if (presance_detect_Active == 1)
+  if (presance_detect_Active == true)
   {
     display.drawBitmap(45, 0, Presance_icon, 13, 13, 1);
   }
 
-  display.setCursor(60, 2);
+  display.setCursor(65, 2);
   display.print(TEMPERATURE);
   display.print("C");
 
@@ -825,7 +912,7 @@ void Display_Home_Screen()
   }
   if (MODE == 2)
   {
-    display.setCursor(85, 2);
+    display.setCursor(90, 2);
     display.print("Monitor");
   }
   display.setTextSize(2);
@@ -839,51 +926,39 @@ void Display_Home_Screen()
   display.setCursor(90, 21);
   display.print(now.second(), DEC);
 
-  if (emergency == false)
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(15, 45);
+  display.print("AC");
+  display.setCursor(50, 45);
+  display.print("Gen V");
+  display.setCursor(95, 45);
+  display.print("Batt");
+
+  display.setCursor(15, 55);
+  if (AC_12_VOLT > 6)
   {
-    display.drawLine(42, 44, 42, 64, SSD1306_WHITE);
-    display.drawLine(85, 44, 85, 64, SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(15, 45);
-    display.print("AC");
-    display.setCursor(50, 45);
-    display.print("Gen V");
-    display.setCursor(95, 45);
-    display.print("Batt");
-
-    display.setCursor(15, 55);
-    if (AC_12_VOLT > 6)
-    {
-      display.print("ON");
-    }
-    else
-    {
-      display.print("OFF");
-    }
-    display.setCursor(57, 55);
-
-    display.print(GEN_VOLT, 0);
-
-    display.setCursor(95, 55);
-    display.print(BATT_VOLT, 1);
+    display.print("ON");
   }
-  if (emergency == true)
+  else
   {
-    display.setTextSize(2);
-    display.setCursor(15, 45);
-    display.print("EMERGENCY");
+    display.print("OFF");
   }
+  display.setCursor(57, 55);
 
+  display.print(GEN_VOLT, 0);
+
+  display.setCursor(95, 55);
+  display.print(BATT_VOLT, 1);
   display.display();
 }
 
 void Display_Main_Menu()
 {
-  static uint8_t SUB_OPTION = 0;
-  bool SELECT_STATE = SELECT_PRESS;
-  bool ENTER_STATE = ENTER_PRESS;
-  bool BACK_STATE = MAINS_PRESS;
+  static int SUB_OPTION = 0;
+  int SELECT_STATE = SELECT_PRESS;
+  int ENTER_STATE = ENTER_PRESS;
+  int BACK_STATE = MAINS_PRESS;
 
   if (SELECT_STATE == 1)
   {
@@ -898,7 +973,8 @@ void Display_Main_Menu()
   if (BACK_STATE == 1)
   {
     delay(button_delay);
-    currentState = generatorState::IDLE_MANUAL;
+    MENU = 0;
+    MODE = 0;
     debugln("back Selected");
   }
 
@@ -984,8 +1060,8 @@ void DISPLAY_SET_TIME_MANUALLY()
   DateTime now = rtc.now();
   static int SUB_OPTION = 0;
 
-  static uint8_t hrs = (now.hour());
-  static uint8_t min = (now.minute());
+  static int hrs = (now.hour());
+  static int min = (now.minute());
   debug(hrs);
   debug(":");
   debugln(min);
@@ -995,11 +1071,11 @@ void DISPLAY_SET_TIME_MANUALLY()
   debug("Sub Option: ");
   debugln(SUB_OPTION);
 
-  bool SELECT_STATE = SELECT_PRESS;
-  bool ENTER_STATE = ENTER_PRESS;
-  bool ADD_STATE = OVERIDE_PRESS;
-  bool SUBTRACT_STATE = GEN_ON_PRESS;
-  bool BACK_STATE = MAINS_PRESS;
+  int SELECT_STATE = SELECT_PRESS;
+  int ENTER_STATE = ENTER_PRESS;
+  int ADD_STATE = OVERIDE_PRESS;
+  int SUBTRACT_STATE = GEN_ON_PRESS;
+  int BACK_STATE = MAINS_PRESS;
 
   display.clearDisplay();
 
@@ -1112,13 +1188,13 @@ void DISPLAY_SET_TIME_MANUALLY()
 void DISPLAY_SET_TIME_MENU()
 {
   display.clearDisplay();
-  bool SELECT_STATE = SELECT_PRESS;
-  bool ENTER_STATE = ENTER_PRESS;
-  bool ADD_STATE = OVERIDE_PRESS;
-  bool SUBTRACT_STATE = GEN_ON_PRESS;
-  bool BACK_STATE = MAINS_PRESS;
+  int SELECT_STATE = SELECT_PRESS;
+  int ENTER_STATE = ENTER_PRESS;
+  int ADD_STATE = OVERIDE_PRESS;
+  int SUBTRACT_STATE = GEN_ON_PRESS;
+  int BACK_STATE = MAINS_PRESS;
 
-  static uint8_t SUB_OPTION = 0;
+  static int SUB_OPTION = 0;
 
   if (NTP_time_active == false) //--- No Wifi Time Only Display Manual screen
   {
@@ -1157,7 +1233,7 @@ void DISPLAY_SET_TIME_MENU()
     if (utc_offset > 0)
     {
       display.print("+");
-    }
+    }    
     display.print(utc_offset);
     display.setCursor(4, 27);
     display.print("Auto Internet Time");
@@ -1167,29 +1243,29 @@ void DISPLAY_SET_TIME_MENU()
     if (SUB_OPTION == 0)
     {
       display.drawRoundRect(2, 13, 124, 12, 2, WHITE);
-      if (ADD_STATE == 1)
-      {
-        delay(button_delay);
-        ++utc_offset;
-        if (utc_offset > 12)
+        if (ADD_STATE == 1)
         {
-          utc_offset = -12;
+          delay(button_delay);
+          ++utc_offset;
+          if (utc_offset > 12)
+          {
+            utc_offset = -12;
+          }          
         }
-      }
-      if (SUBTRACT_STATE == 1)
-      {
-        delay(button_delay);
-        --utc_offset;
-        if (utc_offset < -12)
+        if (SUBTRACT_STATE == 1)
         {
-          utc_offset = 12;
+          delay(button_delay);
+          --utc_offset;
+          if (utc_offset < -12)
+          {
+            utc_offset = 12;
+          }          
         }
-      }
-      if (ENTER_STATE == 1)
-      {
-        delay(button_delay);
-        saveConfigFile();
-      }
+        if (ENTER_STATE == 1)
+        {
+          delay(button_delay);
+          saveConfigFile();
+        }                
     }
 
     if (SUB_OPTION == 1)
@@ -1213,102 +1289,15 @@ void DISPLAY_SET_TIME_MENU()
   }
 }
 
-void Display_CHOKE_SET(){
-  static uint8_t submenu_option = 0;
-  display.clearDisplay();
-
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(30,2);
-  display.print("Choke Setup"); //---Heading
-  display.drawBitmap(47, 22, Choke_icon, 32, 32, 1); //Icon
-
-  display.setTextSize(2);
-  display.setCursor(3,20);
-  display.print("Min"); 
-  display.setCursor(5,43);
-  display.print(servoMin);
-
-  display.setCursor(90,20);
-  display.print("Max"); 
-  display.setCursor(98,43);
-  display.print(servoMax); 
-  chokeServo.attach(SERVO_PIN);
-
-      if (submenu_option == 0)
-      {
-        display.drawRoundRect(2, 40, 35, 20, 3, WHITE);
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          submenu_option = 1;
-        }
-        if (OVERIDE_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMin++; 
-          chokeServo.write(servoMin);
-        }
-        if (GEN_ON_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMin--;
-          chokeServo.write(servoMin);
-        }
-        if (servoMin > 180)
-        {
-          servoMin = 180;
-        }
-        if (servoMin < 0)
-        {
-          servoMin = 0;
-        }        
-      }
-      if (submenu_option == 1)
-      {
-        display.drawRoundRect(92, 40, 35, 20, 3, WHITE);
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          submenu_option = 0;
-          MENU = 3;
-          chokeServo.detach();
-          saveConfigFile();
-        }
-        if (OVERIDE_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMax++;
-          chokeServo.write(servoMax);
-        }
-        if (GEN_ON_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMax--;
-          chokeServo.write(servoMax);
-        }
-        if (servoMax > 180)
-        {
-          servoMax = 180;
-        }
-        if (servoMax < 0)
-        {
-          servoMax = 0;
-        }        
-      }
-
-  display.display();
-}
-
 void DISPLAY_GENERATOR_CONFIG()
 {
-  static uint8_t select_option = 0;
+  static int select_option = 0;
 
-  bool select_state = SELECT_PRESS;
-  bool enter_state = ENTER_PRESS;
-  bool add_state = OVERIDE_PRESS;
-  bool subtract_state = GEN_ON_PRESS;
-  bool BACK_State = MAINS_PRESS;
+  int select_state = SELECT_PRESS;
+  int enter_state = ENTER_PRESS;
+  int add_state = OVERIDE_PRESS;
+  int subtract_state = GEN_ON_PRESS;
+  int BACK_State = MAINS_PRESS;
 
   if (BACK_State == 1) //--- Going back to main Menu
   {
@@ -1323,7 +1312,7 @@ void DISPLAY_GENERATOR_CONFIG()
     delay(button_delay);
     select_option++;
     debugln(select_option);
-    if (select_option > 4)
+    if (select_option > 3)
     {
       select_option = 0;
     }
@@ -1339,22 +1328,18 @@ void DISPLAY_GENERATOR_CONFIG()
   display.setCursor(95, 2);
   display.print("Save");
 
-  display.setCursor(2, 16);
+  display.setCursor(2, 18);
   display.print("Start Time:");
-  display.setCursor(2, 28);
+  display.setCursor(2, 30);
   display.print("Stop Time:");
-  display.setCursor(2, 40);
+  display.setCursor(2, 42);
   display.print("Crank Time:");
-  display.setCursor(2, 52 );
-  display.print("Choke Setup:");
-  
 
-
-  display.setCursor(85, 16);
+  display.setCursor(85, 18);
   display.print(start_time);
   if (select_option == 0)
   {
-    display.drawRoundRect(82, 14, 40, 11, 2, WHITE);
+    display.drawRoundRect(82, 16, 40, 11, 2, WHITE);
     if (add_state == 1)
     {
       delay(button_delay);
@@ -1377,11 +1362,11 @@ void DISPLAY_GENERATOR_CONFIG()
 
   display.print(":00");
 
-  display.setCursor(85, 28);
+  display.setCursor(85, 30);
   display.print(stop_time);
   if (select_option == 1)
   {
-    display.drawRoundRect(82, 26, 40, 11, 2, WHITE);
+    display.drawRoundRect(82, 28, 40, 11, 2, WHITE);
     if (add_state == 1)
     {
       delay(button_delay);
@@ -1403,11 +1388,11 @@ void DISPLAY_GENERATOR_CONFIG()
   }
   display.print(":00");
 
-  display.setCursor(85, 40);
+  display.setCursor(85, 42);
   display.print(crank_time);
   if (select_option == 2)
   {
-    display.drawRoundRect(82, 38, 40, 11, 2, WHITE);
+    display.drawRoundRect(82, 40, 40, 11, 2, WHITE);
     if (add_state == 1)
     {
       delay(button_delay);
@@ -1429,9 +1414,9 @@ void DISPLAY_GENERATOR_CONFIG()
   }
   display.print("sec");
 
-  if (select_option == 4) // Save
+  if (select_option == 3) // Save
   {
-    display.drawRoundRect(82, 0, 31, 11, 2, WHITE);
+    display.drawRoundRect(89, 0, 31, 11, 2, WHITE);
     if (enter_state == 1)
     {
       delay(button_delay);
@@ -1440,39 +1425,19 @@ void DISPLAY_GENERATOR_CONFIG()
       MENU = 1;
     }
   }
-
-  if (select_option == 3)
-  {
-    display.fillCircle(85, 55, 3, WHITE);
-    if (enter_state == 1)
-    {
-      delay(button_delay);
-      select_option = 0;
-      MENU = 5;
-    }
-    
-  }
-  
   display.display();
 }
 
 void DISPLAY_NETWORKING()
 {
-  static uint8_t select_option = 0;
+  static int select_option = 0;
   // delay(button_delay);
 
-  debug("NTP Time: ");
-  debugln(NTP_time_active);
-  debug("MQTT: ");
-  debugln(MQTT_Active);
-  debug("Presance: ");
-  debugln(presance_detect_Active);
-
-  bool select_state = SELECT_PRESS;
-  bool enter_state = ENTER_PRESS;
-  bool add_state = OVERIDE_PRESS;
-  bool subtract_state = GEN_ON_PRESS;
-  bool BACK_State = MAINS_PRESS;
+  int select_state = SELECT_PRESS;
+  int enter_state = ENTER_PRESS;
+  int add_state = OVERIDE_PRESS;
+  int subtract_state = GEN_ON_PRESS;
+  int BACK_State = MAINS_PRESS;
 
   if (BACK_State == 1) //--- Back to main menu
   {
@@ -1496,6 +1461,8 @@ void DISPLAY_NETWORKING()
 
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
+  // display.setCursor(0,2);
+  // display.print("Networking");
   display.setCursor(100, 40);
   display.print("Save");
 
@@ -1556,7 +1523,6 @@ void DISPLAY_NETWORKING()
   {
     display.fillRect(82, 53, 8, 8, WHITE);
   }
-  
 
   //--- Save Selection ---//
   if (select_option == 3)
@@ -1574,356 +1540,9 @@ void DISPLAY_NETWORKING()
   display.display();
 }
 
-void INITIAL_GEN_SETUP(){
-  while (initial_setup == false)
-  {
-    /* Initial Setup Code on the screen */
-    static uint8_t Select_Option = 0;
-    static uint8_t submenu_option = 0;
-
-    bool select_state = SELECT_PRESS;
-    bool enter_state = ENTER_PRESS;
-    bool add_state = OVERIDE_PRESS;
-    bool subtract_state = GEN_ON_PRESS;
-    bool BACK_State = MAINS_PRESS;
-
-    display.clearDisplay();
-
-    if (BACK_State == 1)
-    {
-      initial_setup = true;
-    }
-    
-
-    if (select_state == 1) //--- Select option
-    {
-      delay(button_delay);
-      Select_Option++;
-      if (Select_Option > 3)
-      {
-        Select_Option = 0;
-      }
-      debugln(Select_Option);
-    }
-
-
-    if (Select_Option == 0) //Display Welcome Screen ********ADD a nice image
-    {
-      display.setTextSize(2);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(20,2);
-      display.print("Welcome");
-
-      display.setTextSize(1);
-      display.setCursor(25,50);
-      display.print("Press Entre");
-
-      if (ENTER_PRESS == 1)
-      {
-        delay(button_delay);
-        Select_Option = 1;
-      }
-    }
-
-    if (Select_Option == 1) //--- Choke Servo Setup
-    {
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(30,2);
-      display.print("Choke Setup"); //---Heading
-      display.drawBitmap(47, 22, Choke_icon, 32, 32, 1); //Icon
-
-      display.setTextSize(2);
-      display.setCursor(3,20);
-      display.print("Min"); //---Heading
-      display.setCursor(5,43);
-      display.print(servoMin); //---Heading
-
-      display.setCursor(90,20);
-      display.print("Max"); //---Heading
-      display.setCursor(98,43);
-      display.print(servoMax); //---Heading
-      chokeServo.attach(SERVO_PIN);
-
-      if (submenu_option == 0)
-      {
-        display.drawRoundRect(2, 40, 35, 20, 3, WHITE);
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          submenu_option = 1;
-        }
-        if (OVERIDE_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMin++; 
-          chokeServo.write(servoMin);
-        }
-        if (GEN_ON_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMin--;
-           chokeServo.write(servoMin);
-        }
-        if (servoMin > 180)
-        {
-          servoMin = 180;
-        }
-        if (servoMin < 0)
-        {
-          servoMin = 0;
-        }        
-      }
-      
-      if (submenu_option == 1)
-      {
-        display.drawRoundRect(92, 40, 35, 20, 3, WHITE);
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          submenu_option = 0;
-          Select_Option = 2;
-          chokeServo.detach();
-        }
-        if (OVERIDE_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMax++;
-          chokeServo.write(servoMax);
-        }
-        if (GEN_ON_PRESS == 1)
-        {
-          delay(button_delay);
-          servoMax--;
-          chokeServo.write(servoMax);
-        }
-        if (servoMax > 180)
-        {
-          servoMax = 180;
-        }
-        if (servoMax < 0)
-        {
-          servoMax = 0;
-        }        
-      }
-    }
-    
-    if (Select_Option == 2) // Engine crank time for starting
-    {
-      //Engine starting Crank time in seconds
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(15,2);
-      display.print("Engine Crank Time"); //---Heading
-      display.drawBitmap(2, 13, Start_Crank_icon, 50, 50, 1); //Icon
-      display.setTextSize(2);
-      display.setCursor(80,25);
-      display.print(crank_time);
-      display.setTextSize(1);
-      display.setCursor(78,47);
-      display.print("Sec");
-
-      if (OVERIDE_PRESS == 1)
-      {
-        delay(button_delay);
-        crank_time++;
-      }
-      if (GEN_ON_PRESS == 1)
-      {
-        delay(button_delay);
-        crank_time--;
-      }
-
-      if (crank_time > 30)
-      {
-        crank_time = 1;
-      }
-      if (crank_time <= 0)
-      {
-        crank_time = 30;
-      }
-
-      if (ENTER_PRESS == 1)
-      {
-        delay(button_delay);
-        Select_Option = 3;
-      }
-      
-      
-      
-      
-      
-
-
-
-
-
-
-
-
-
-
-
-
-
-    }
-    
-    if (Select_Option == 3) // Auto Mode start and Stop Time
-    {
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(5,2);
-      display.print("Auto Start/End Time"); //---Heading
-      display.drawBitmap(47, 22, Time_Schedule_icon, 32, 32, 1); //Icon
-
-      display.setCursor(4, 20);
-      display.print("Start");
-      display.setCursor(90, 20);
-      display.print("Stop");
-
-      display.setTextSize(2);
-      display.setCursor(4, 34);
-      display.print(start_time);
-      display.setCursor(90, 34);
-      display.print(stop_time);
-
-      if (submenu_option == 0)
-      {
-        display.drawRoundRect(1, 30, 30, 22, 2, WHITE);
-        if (OVERIDE_PRESS == 1)
-        {
-          delay(button_delay);
-          start_time++;         
-        }
-        if (GEN_ON_PRESS == 1)
-        {
-          delay(button_delay);
-          start_time--;
-        }        
-        if (start_time > 24)
-          {
-            start_time = 0;
-          }
-        if (start_time < 0)
-          {
-            start_time = 24;
-          }
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          submenu_option = 1;
-        }
-      }
-
-      if (submenu_option == 1)
-      {
-        display.drawRoundRect(87, 30, 30, 22, 2, WHITE);
-        if (OVERIDE_PRESS == 1)
-        {
-          delay(button_delay);
-          stop_time++;
-        }
-        if (GEN_ON_PRESS == 1)
-        {
-          delay(button_delay);
-          stop_time--;
-        }
-        if (stop_time > 24)
-        {
-          stop_time = 0;
-        }
-        if (stop_time < 0)
-        {
-          stop_time = 24;
-        }
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          submenu_option = 0;
-          Select_Option = 4;
-        }        
-      }
-    }
-    
-    if (Select_Option == 4) // GEnerator Voltage Monitoring
-    {
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(5,2);
-      display.print("Generator Monitoring"); //---Heading
-      display.drawBitmap(7, 20, Monitor_Icon, 40, 41, 1); //Icon
-
-      display.setTextSize(2);
-      display.setCursor(50, 35);
-      display.print("Yes");
-      display.setCursor(98, 35);
-      display.print("No");
-      
-      if (OVERIDE_PRESS == 1)
-      {
-        delay(button_delay);
-        submenu_option++;
-        if (submenu_option > 1)
-        {
-          submenu_option = 0;
-        }        
-      }
-
-      if (submenu_option == 0)
-      {
-        display.drawRoundRect(47, 32, 40, 24, 3, WHITE);
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          Monitor_Active = true;
-          submenu_option = 0;
-          Select_Option = 5;
-        }
-        
-      }
-      if (submenu_option == 1)
-      {
-        display.drawRoundRect(95, 32, 28, 24, 3, WHITE);
-        if (ENTER_PRESS == 1)
-        {
-          delay(button_delay);
-          Monitor_Active = false;
-          submenu_option = 0;
-          Select_Option = 5;
-        }
-      }      
-    }
-    
-    if (Select_Option == 5) //--- Saving Setup
-    {
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(30,2);
-      display.print("Save Setup"); //---Heading
-      display.drawBitmap(2, 13, Setup_Save_icon, 50, 50, 1); //Icon
-
-      display.setTextSize(2);
-      display.setCursor(65,25);
-      display.print("Save"); //---Heading
-      display.drawRoundRect(60, 21, 55, 24, 3, WHITE);
-
-      if (ENTER_PRESS == 1)
-      {
-        delay(button_delay);
-        initial_setup = true;
-        saveConfigFile();
-      }      
-    }
-    
-    display.display();
-    
-  }
-  
-}
-
 void setup()
 {
-  static uint8_t windowLength = 3; // how long to average the signal, for statistist
+  static float windowLength = 3; // how long to average the signal, for statistist
 
   Serial.begin(115200);
 
@@ -1968,86 +1587,98 @@ void setup()
   inputStats.setWindowSecs(windowLength);
 
   chokeServo.attach(SERVO_PIN); // Servo attach pin to object
-  chokeServo.write(servoMin);          // Set Choke to Closed
+  chokeServo.write(0);          // Set Choke to Closed
   delay(1000);
   chokeServo.detach();
 
   NTPtimeClient.begin(); // NTP Client Start up
-  INITIAL_GEN_SETUP();
 }
 
 void loop()
 {
   wifi_reconnect();
-
-  Generator_Monitoring();
-
   DateTime now = rtc.now();
 
   BATT_VOLT = (analogRead(BATT_SENSE) * 3.3 / (1023) / (0.2272));
   AC_12_VOLT = (analogRead(AC_12V_SENSE) * 3.3 / (1023)) / (0.2272);
   TEMPERATURE = rtc.getTemperature();
 
-  switch (currentState)
+  //--------- Manual Mode = MODE O -----------//
+  if (MODE == 0 && MENU == 0)
   {
-  //-----------MANUAL MODE -----------------//
-  case generatorState::IDLE_MANUAL:
-    Display_Home_Screen();
-    overideSwitch();
-    setLED(0, 180, 180); //-- Cyan for Manual
-    MODE = 0;
+    overideSwitch(); // Run function to choose between Auto or Manual Mode overide button press
 
-    if (ENTER_PRESS == 1 && SELECT_PRESS == 1)
+    int SELECT_BTN_STATE = SELECT_PRESS;
+    int ENTER_BTN_STATE = ENTER_PRESS;
+    int MAINS_BTN_STATE = MAINS_PRESS;
+    int GEN_ON_BTN_STATE = GEN_ON_PRESS;
+    int START_BTN_STATE = START_PRESS;
+    int CHOKE_BTN_STATE = CHOKE_PRESS;
+
+    Display_Home_Screen();
+    //***************** Add LED for Manual Mode
+
+    if (ENTER_BTN_STATE == 1 && SELECT_BTN_STATE == 1) //--- Selecting Main Menue
     {
       delay(button_delay);
-      currentState = generatorState::MENU;
-      debugln("State: MENU");
-      // DEBUG_CURRENT_STATE(currentState);
+      debugln("Change to Menu");
+      MODE = 4;
+      MENU = 1;
     }
-    if (START_PRESS == 1)
+
+    if (GEN_ON_BTN_STATE == 1) //--- Turning On and Off Gen *Not Starting
+    {
+      delay(button_delay);
+      GEN_TOGGLE_RELAY;
+    }
+    if (START_PRESS == 1) //--- Starter button in manual mode starts or stops the generator
     {
       delay(button_delay);
       if (started == false)
       {
-        currentState = generatorState::STARTING;
-        MODE = 0;
-        debugln("State: STARTING");
+        LAST_MODE = MODE;
+        MODE = 4;
       }
-      if (started == true)
+      else if (started == true)
       {
-        currentState = generatorState::SHUTDOWN;
-        debugln("State: SHUTDOWN");
-        // ShutDown_Sequance();
+        LAST_MODE = MODE;
+        MODE = 5;
       }
     }
-    if (MAINS_PRESS == 1)
+    if (MAINS_PRESS == 1) //--- Mains Button press toggles mains relay
     {
       delay(button_delay);
       MAINS_TOGGLE_RELAY;
     }
-    break;
+  }
+  //------------ End Manual Mode -------------//
 
-    //-----------AUTO MODE -----------//
-  case generatorState::IDLE_AUTO:
-    Display_Home_Screen();
-    overideSwitch();
-    setLED(0, 180, 0); //-- Green for Auto
-    MODE = 1;
+  //------------ Auto Mode = MODE 1 ----------//
+  if (MODE == 1 && MENU == 0)
+  {
+    overideSwitch(); // Run function to choose between Auto or Manual Mode overide button press
     bool Active_Auto_Time;
-    
+    Display_Home_Screen();
+
     if ((now.hour()) >= start_time && (now.hour()) <= stop_time) //--- Check time within set limits for auto start routine
     {
-      Active_Auto_Time = 1;
+      Active_Auto_Time = true;
     }
     else
     {
-      Active_Auto_Time = 0;
+      Active_Auto_Time = false;
+    }
+
+    if (started == true)
+    {
+      MODE = 2;
+      //monitorpreviousMillis = millis();
     }
 
     //--- Not using presance detection
-    if (presance_detect_Active == 0)
+    if (presance_detect_Active == false)
     {
-      if (Active_Auto_Time == 1) // -- time for Auto start is valid
+      if (Active_Auto_Time == true) // -- time for Auto start is valid
       {
         // *********** Set LED Auto Mode Active
         if (millis() - debugpreviousMillis > debugPeriod)
@@ -2062,297 +1693,168 @@ void loop()
 
         if (AC_12_VOLT < 6) //--- Municipal Power is out - Run Start Sequance
         {
-          currentState = generatorState::START_WAIT;
-          startWaitMillis = millis();
+          // pause before starting
+          static unsigned long startWaitMillis = millis();
+          unsigned long startWaitPeriod = (10 * 1000);
+
+          if (millis() - startWaitPeriod > startWaitMillis)
+          {
+            startWaitMillis = millis();
+            // Start_Sequance();
+            debugln("Starting Generator");
+            LAST_MODE = MODE;
+            MODE = 4;
+          }
         }
-        if (AC_12_VOLT > 6)
+        else
         {
           debugln("Municipal Power is On");
         }
       }
-      else
+      else //--- Time for Auto Start not Valid
       {
         debugln("After Hours in AUTO MODE");
         // *********** Set LED Auto Mode Inactive
       }
     }
 
-      // --- Using Presance detection
-      if (presance_detect_Active == true)
+    // --- Using Presance detection
+    if (presance_detect_Active == true)
+    {
+      if (Active_Auto_Time == true && presance_detect == true) // -- time for Auto start is valid and presence detected is true
       {
-        debug("Presance Active: ");
-        debugln(presance_detect_Active);
-        debug("presanse detect:");
-        debugln(presance_detect);
+        // *********** Set LED Auto Mode Active
+        debugln("Hours are good for AUTO MODE No Presance Detection");
+        debugln(now.hour());
+        debugln(start_time);
+        debug("AC 12v Status = ");
+        debugln(AC_12_VOLT);
 
-        if (Active_Auto_Time == true && presance_detect == true) // -- time for Auto start is valid and presence detected is true
+        if (AC_12_VOLT < 6) //--- Municipal Power is out - Run Start Sequance
         {
-          // *********** Set LED Auto Mode Active
-          debugln("Hours are good for AUTO MODE With Presance Detection ************");
-          debugln(now.hour());
-          debugln(start_time);
-          debug("AC 12v Status = ");
-          debugln(AC_12_VOLT);
+          // pause before starting
+          static unsigned long startWaitMillis = millis();
+          unsigned long startWaitPeriod = (10 * 1000);
 
-          if (AC_12_VOLT < 6) //--- Municipal Power is out - Run Start Sequance
+          if (millis() - startWaitPeriod > startWaitMillis)
           {
-            currentState = generatorState::START_WAIT;
             startWaitMillis = millis();
+            // Start_Sequance();
+            debugln("Starting Generator");
+            LAST_MODE = MODE;
+            MODE = 4;
+          }
+        }
+        else
+        {
+          debugln("Municipal Power is On");
+        }
+      }
+      else if (Active_Auto_Time == true && presance_detect == false)
+      {
+        debugln("No One Home, Not starting Generator");
+      }
+      else if (Active_Auto_Time == false)
+      {
+        debugln("After Hours in AUTO MODE");
+        // *********** Set LED Auto Mode Inactive
+      }
+    }
+  }
+  //----------- End Auto Mode ---------------//
+
+  //----------- Monitoring Mode = MODE 2 -------------//    ************ Add Switch case statements
+  if (MODE == 2 && MENU == 0)
+  {
+    Display_Home_Screen();
+    Generator_Monitoring();
+
+    //static unsigned long powerOnWaitMillis = millis();
+    static unsigned long monitorpreviousMillis = millis();
+    //****************** Set LED color for monitoring
+    debugln("Monitoring Mode");
+    if (AC_12_VOLT > 6)
+    {
+      currentState = generatorState::ACPOWERON;
+      debugln("Power Came Back on.");
+      static unsigned long powerOnWaitMillis = millis(); 
+    }
+    
+    if (AC_12_VOLT < 6)
+    {
+      currentState  = generatorState::MONITORING;
+      debugln("Power Remaining OFF."); 
+    }
+
+      switch (currentState)
+      {
+      case generatorState::MONITORING:
+        if (millis() - monitorpreviousMillis > monitorPeriod)
+        {
+          monitorpreviousMillis = millis();
+          if (GEN_VOLT > 200) //--- Generator voltage is normal
+          {
+            monitorpreviousMillis = millis();
+            debug("Generator Voltage OK = ");
+            debugln(GEN_VOLT);
+            digitalWrite(RELAY_MAINS, HIGH);
           }
           else
           {
-            debugln("Municipal Power is On");
+            currentState = generatorState::EMERGENCY;
+            LAST_MODE = 0;
+            MODE = 5;
           }
-        }
-        else if (Active_Auto_Time == true && presance_detect == false)
+        }        
+        break;
+
+      case generatorState::ACPOWERON:
+        if (millis() - powerOnWaitMillis > powerOnPeriod)
         {
-          debugln("No One Home, Not starting Generator");
+          debugln("POWER came Back ON Shutting Down");
+          ShutDown_Sequance();
         }
-        else if (Active_Auto_Time == false)
-        {
-          debugln("After Hours in AUTO MODE");
-          // *********** Set LED Auto Mode Inactive
-        }
+        break;
+      
+        default:
+        break;
       }
-    break;
+  }
+  //-----------End Monitoring Mode ------------//
 
-  case generatorState::MENU:
-    setLED(0, 0, 180); //-- Blue for Menu
-    if (MENU == 1)
-    {
-      Display_Main_Menu();
-    }
-    if (MENU == 2)
-    {
-      DISPLAY_SET_TIME_MENU();
-    }
-    if (MENU == 3)
-    {
-      DISPLAY_GENERATOR_CONFIG();
-    }
-    if (MENU == 4)
-    {
-      DISPLAY_NETWORKING();
-    }
-    if (MENU == 5)
-    {
-      Display_CHOKE_SET();
-    }
-    
+  // ---------Start and Shutdown Modes ------------//
+  if (MODE == 4 && MENU == 0)
+  {
+    Start_Sequance();
+  }
+  if (MODE == 5 && MENU == 0)
+  {
+    ShutDown_Sequance();
+  }
 
-    break;
+  //---------- Display Menu's and Options ---------//
+  if (MODE == 4 && MENU == 1) // Display Main Menu
+  {
+    debugln("Displaying Main Menu");
+    Display_Main_Menu();
+    // ****************** Add LED Color for Menu
+  }
 
-  case generatorState::START_WAIT:
-    Display_Home_Screen();
-    setLED(180, 150, 0); //-- Yellow for Starting
-    if (AC_12_VOLT < 6)
-    {
-      if (millis() - startWaitMillis > (startWaitPeriod * 1000))
-      {
-        currentState = generatorState::STARTING;
-        debugln("State: STARTING - Starting");
-      }
-    }
-    else
-    {
-      debugln("Power came back on");
-      currentState = generatorState::IDLE_AUTO;
-    }
-    break;
+  if (MODE == 4 && MENU == 2)
+  {
+    debugln("Displaying Set Time Menu");
+    DISPLAY_SET_TIME_MENU();
+  }
 
-  case generatorState::STARTING:
+  if (MODE == 4 && MENU == 3)
+  {
+    debugln("Displaying Gen Config Menu");
+    DISPLAY_GENERATOR_CONFIG();
+  }
 
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(10, 2);
-    display.println("Staring Generator");
-    display.display();
-    digitalWrite(RELAY_ON, HIGH); // Relay On to turn on Generator Power
-    debugln("Opening Choke");
-    chokeServo.attach(SERVO_PIN);
-    chokeServo.write(servoMax); // Set Choke to Open
-    currentState = generatorState::CHOKE_ON;
-    startMillis = millis();
-
-    break;
-
-  case generatorState::CHOKE_ON:
-
-    if (millis() - startMillis > 1000)
-    {
-      display.setCursor(1, 13);
-      display.println("Cranking");
-      display.display();
-      debugln("Starting Generator");
-      digitalWrite(RELAY_START, HIGH); // Simulate key to start
-      startMillis = millis();
-      currentState = generatorState::CRANKING;
-    }
-    break;
-
-  case generatorState::CRANKING:
-
-    if (millis() - startMillis > (crank_time * 1000))
-    {
-      debugln("Simulating Releasing of the key");
-      digitalWrite(RELAY_START, LOW); // Simutales stopping the start and cranking of the key
-      startMillis = millis();
-      currentState = generatorState::RUNNING;
-    }
-    break;
-
-  case generatorState::RUNNING:
-
-    if (TEMPERATURE < 15)
-    {
-      if (millis() - startMillis > 8000)
-      {
-        debugln("Cold Day Closeing Choke");
-        display.setCursor(1, 38);
-        display.println("Closing Choke");
-        display.display();
-        chokeServo.attach(SERVO_PIN);
-        chokeServo.write(servoMin); // Set Choke to Closed
-        startMillis = millis();
-        currentState = generatorState::STARTED;
-      }
-    }
-    else
-    {
-      if (millis() - startMillis > 2000)
-      {
-        debugln("Warm Day Closeing Choke");
-        display.setCursor(1, 38);
-        display.println("Closing Choke");
-        display.display();
-        chokeServo.attach(SERVO_PIN);
-        chokeServo.write(servoMin); // Set Choke to Closed
-        startMillis = millis();
-        currentState = generatorState::STARTED;
-      }
-    }
-    break;
-
-  case generatorState::STARTED:
-    if (millis() - startMillis > 500)
-    {
-      display.setCursor(1, 50);
-      display.println("Start Complete");
-      display.display();
-      chokeServo.detach();
-      started = true;
-      debugln("Start Sequance Complete");
-      if (MODE == 1) //---Was in Auto Mode go to Monitoring
-      {
-        currentState = generatorState::MONITORING_INITIALIZE;
-        monitorWaitMillis = millis();
-        debugln("State: MONITORING_INITIALIZE");
-      }
-      if (MODE == 0) //--- Was in Manual Mode
-      {
-        currentState = generatorState::IDLE_MANUAL;
-      }
-    }
-    break;
-
-  case generatorState::MONITORING_INITIALIZE:
-    Display_Home_Screen();
-    setLED(180, 0, 180); //-- Magenta for Monitoring
-    if (millis() - monitorWaitMillis > monitorWaitPeriod)
-    {
-      currentState = generatorState::MONITORING_RUN;
-      debugln("State: MONITORING_RUN");
-    }
-    break;
-
-  case generatorState::MONITORING_RUN:
-    Display_Home_Screen();
-     setLED(180, 0, 180); //-- Magenta for Monitoring
-    MODE = 2;
-
-    if (START_PRESS == 1)
-    {
-      currentState = generatorState::SHUTDOWN;
-      MODE = 0;
-    }
-    
-
-    if (AC_12_VOLT > 6)
-    {
-      currentState = generatorState::SHUTDOWN_WAIT;
-      shutdownWaitMillis = millis();
-    }
-    if (GEN_VOLT > 200)
-    {
-      debug("Generator Voltage OK = ");
-      debugln(GEN_VOLT);
-      digitalWrite(RELAY_MAINS, HIGH);
-    }
-    else if (GEN_VOLT < 200)
-    {
-      currentState = generatorState::EMERGENCY;
-      emergency = true;
-    }
-    break;
-
-  case generatorState::SHUTDOWN_WAIT:
-    Display_Home_Screen();
-    if (AC_12_VOLT > 6)
-    {
-      if (millis() - shutdownWaitMillis > shutdownWaitPeriod)
-      {
-        currentState = generatorState::SHUTDOWN;
-        debugln("State: SHUTDOWN");
-      }
-    }
-    else
-    {
-      currentState = generatorState::MONITORING_RUN;
-    }
-    break;
-
-  case generatorState::SHUTDOWN:
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(10, 20);
-    // Display static text
-    display.println("Shutting Down");
-    display.display();
-
-    digitalWrite(RELAY_MAINS, LOW);
-    delay(500);
-    digitalWrite(RELAY_ON, LOW);
-
-    if (MODE == 0)
-    {
-      currentState = generatorState::IDLE_MANUAL;
-    }
-    if (MODE == 1 || MODE == 2)
-    {
-      currentState = generatorState::IDLE_AUTO;
-    }
-    started = false;
-    break;
-
-  case generatorState::EMERGENCY:
-    Display_Home_Screen();
-    setLED(180, 0, 0); //-- Red for Emergency
-    debugln("State: EMERGENCY SHUTDOWN");
-    digitalWrite(RELAY_MAINS, LOW);
-    digitalWrite(RELAY_ON, LOW);
-    MODE = 0;
-    if (OVERIDE_PRESS == 1 && MAINS_PRESS == 1)
-    {
-      delay(button_delay);
-      currentState = generatorState::IDLE_MANUAL;
-      emergency = false;
-      debugln("State: IDLE_MANUAL");
-    }
-    break;
-
-  default:
-    break;
+  if (MODE == 4 && MENU == 4)
+  {
+    debugln("Displaying Networking Menu");
+    DISPLAY_NETWORKING();
   }
 }
