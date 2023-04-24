@@ -67,17 +67,19 @@ uint8_t MENU = 1;
 
 //--- MQTT Defines and Variables ---//
 bool init_mqtt_conn = false;
-#define PUBLISH_TIME 30                                     
+//#define PUBLISH_TIME 30                                     
 #define UTC_offset_topic "GenCon/stat/utc-ofset"            
 #define start_time_topic "GenCon/stat/start-time"           
 #define stop_time_topic "GenCon/stat/stop-time"             
 #define presance_detect_topic "GenCon/stat/presance-detect" 
-#define power_state_topic "GenCon/stat/power-state"         
+#define running_state_topic "GenCon/stat/running"         
 #define battery_volt_topic "GenCon/stat/batt-volt"          
 #define temp_topic "GenCon/stat/temp"                       
 #define gen_volt_topic "GenCon/stat/gen-volts"              
 #define control_mode_topic "GenCon/stat/mode"
 #define crank_time_topic "GenCon/stat/crank"
+#define runtime_topic "GenCon/stat/runtime"
+#define totalruntime_topic "GenCon/stat/totaltime"
 
 bool Wifi_Active = false;
 bool NTP_time_active = false;
@@ -103,33 +105,36 @@ uint8_t RTC_Hrs;   // Set RTC Time,
 uint8_t RTC_Min;   // Set RTC Time,
 uint8_t RTC_Sec;   // Set RTC Time,
 
-uint16_t wifiReconnectPeriod = 5000;
+uint32_t wifiReconnectPeriod = 5000;
 uint32_t previousWifiReconnect = 0;
 
-uint16_t mqtt_retry_Period = 5000; // in milliseconds
+uint32_t mqtt_retry_Period = 5000; // in milliseconds
 uint32_t mqtt_retry_previousMillis = 0;
 
-uint16_t mqtt_Send_Period = 2000; // in milliseconds
+uint32_t mqtt_Send_Period = 3000; // in milliseconds
 uint32_t mqtt_Send_previous = 0;
 
-uint16_t debugPeriod = 3000; // in milliseconds
+uint32_t debugPeriod = 3000; // in milliseconds
 uint32_t debugpreviousMillis = 0;
 
 uint32_t startWaitMillis = 0;
-uint16_t startWaitPeriod = 10;
+uint32_t startWaitPeriod = 10;
 
 static uint32_t startMillis = millis();
 
 uint32_t shutdownWaitMillis = 0;
-uint16_t shutdownWaitPeriod = 10000;
+uint32_t shutdownWaitPeriod = 10000;
 
-uint16_t monitorWaitPeriod = 3000; // in milliseconds
+uint32_t monitorWaitPeriod = 5000; // in milliseconds
 uint32_t monitorWaitMillis = 0;
 
-//unsigned long runTime = 0;
-//unsigned long totalRunTime = 0;
+uint32_t runTime = 0;
+uint32_t currentRunTime = 0;
+uint32_t runtimeStart = 0;
+uint32_t runtimeEnd = 0;
+uint32_t totalRunTime = 0;
 
-#define button_delay 150
+#define button_delay 250
 
 //--- General GPIO Pins ---//
 
@@ -151,7 +156,7 @@ uint8_t servoMin = 0;
 uint8_t servoMax = 90;
 
 float GEN_VOLT;         
-static float slope_intercept = 1.38;
+
 
 bool mains_state = false;
 bool started = false;
@@ -166,18 +171,7 @@ bool Monitor_Active = true;
 // MENU 3 = DISPLAY GENERATOR CONFIG
 // MENU 4 = DISPLAY NETWORKING
 // MENU 5 = DISPLAY CHOKE SET
-// MENU 6 =
-
-//-------- MODE Numbers ----------//
-// MODE 0 = Manual Mode
-// MODE 1 = AUTO Mode
-// MODE 2 = Monitoring Mode
-// MODE 3 = Menu Mode
-// MODE 4 = Start Mode
-// MODE 5 = Shutdown Mode
-
-
-
+// MENU 6 = Display MENU REFUEL
 
     enum class generatorState : uint8_t{
     IDLE_MANUAL,
@@ -194,6 +188,7 @@ bool Monitor_Active = true;
     SHUTDOWN_WAIT,
     SHUTDOWN,
     EMERGENCY,
+    MENU_REFUEL,
     };
     static generatorState currentState = generatorState::IDLE_MANUAL;
 
